@@ -1,0 +1,112 @@
+name: fitmonth
+
+x-app: &app
+  build:
+    context: .
+    dockerfile: Dockerfile
+  working_dir: /var/www/html
+  restart: unless-stopped
+  environment: &app-environment
+    APP_ENV: local
+    APP_DEBUG: "true"
+    APP_URL: http://localhost:8000
+    DB_CONNECTION: mysql
+    DB_HOST: mysql
+    DB_PORT: "3306"
+    DB_DATABASE: fitmonth
+    DB_USERNAME: fitmonth
+    DB_PASSWORD: secret
+    REDIS_HOST: redis
+    REDIS_PASSWORD: ""
+    REDIS_PORT: "6379"
+    SESSION_DRIVER: redis
+    CACHE_STORE: redis
+    QUEUE_CONNECTION: redis
+    FRONTEND_URL: http://localhost:3000
+  volumes:
+    - ./:/var/www/html
+    - app-vendor:/var/www/html/vendor
+  networks:
+    - fitmonth
+
+services:
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: fitmonth-nginx
+    restart: unless-stopped
+    ports:
+      - "8000:80"
+    volumes:
+      - ./:/var/www/html:ro
+      - ./docker/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - app
+    networks:
+      - fitmonth
+
+  app:
+    <<: *app
+    container_name: fitmonth-app
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  horizon:
+    <<: *app
+    container_name: fitmonth-horizon
+    command: php artisan horizon
+    depends_on:
+      app:
+        condition: service_started
+      redis:
+        condition: service_started
+      mysql:
+        condition: service_healthy
+
+  scheduler:
+    <<: *app
+    container_name: fitmonth-scheduler
+    command: php artisan schedule:work
+    depends_on:
+      app:
+        condition: service_started
+      mysql:
+        condition: service_healthy
+
+  mysql:
+    image: mysql:8.0
+    container_name: fitmonth-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: fitmonth
+      MYSQL_USER: fitmonth
+      MYSQL_PASSWORD: secret
+      MYSQL_ROOT_PASSWORD: root
+      TZ: Europe/Moscow
+    command: --default-authentication-plugin=mysql_native_password
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-proot"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    networks:
+      - fitmonth
+
+  redis:
+    image: redis:7-alpine
+    container_name: fitmonth-redis
+    restart: unless-stopped
+    networks:
+      - fitmonth
+
+volumes:
+  mysql-data:
+  app-vendor:
+
+networks:
+  fitmonth:
+    driver: bridge
